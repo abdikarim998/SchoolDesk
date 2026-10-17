@@ -1,70 +1,51 @@
-# Public deployment (Railway + MySQL)
+# Vercel preview deployment (Laravel + MySQL)
 
-This project can run as a public Laravel application with a private MySQL service on Railway's Free plan. The app service gets a Railway `*.up.railway.app` address with HTTPS. The address is usable while the service is active.
+This repository is prepared to run Laravel 12 in a Vercel container using FrankenPHP. The Vercel Hobby plan is free, but its terms limit it to personal, non-commercial use. A portal used to run a school is not an appropriate Hobby production deployment. Use this setup only for a personal preview with synthetic records; do not enter real student, parent, or staff data.
 
-## Cost
+Vercel containers are stateless. Vercel does not currently provide MySQL in its Marketplace integrations, so a separate database provider is required for a functional preview. Keep its credentials in Vercel environment variables. Vercel container functions do not have static outbound IPs, so an external database cannot be restricted to a fixed Vercel IP range. This is another reason to keep the free deployment limited to synthetic demo data.
 
-Railway Free costs **US$0/month** and includes **US$1 of resource usage per month**. A new account may first receive a one-time US$5 trial credit for up to 30 days; the recurring Free-plan credit is still only US$1/month. If the app and MySQL use more than the free allowance, Railway can stop the services until the next billing cycle. Stay on Free and do not add a paid plan or committed spend. Railway's configurable hard usage limit has a US$10 minimum, so it cannot be used as a US$1 cap. This is suitable for a prototype, but it cannot guarantee that the school portal stays online all month. See [Railway's current plan limits](https://docs.railway.com/pricing/plans) and [cost controls](https://docs.railway.com/pricing/cost-control).
+## Deployment files
 
-## Deploy the app
+- `Dockerfile.vercel` builds the Vite assets, installs Laravel's production PHP dependencies, enables `pdo_mysql`, and serves Laravel with FrankenPHP.
+- `Caddyfile` serves only Laravel's `public` directory and forwards app routes to `public/index.php`.
+- `vercel.json` routes the Vercel project to the container service.
+- `.dockerignore` prevents local environment files, dependencies, and database exports from entering the image.
 
-1. Create/sign in to a Railway account and stay on the **Free** plan.
-2. In the project folder, install the Railway CLI, sign in, create a project, and upload this app:
+## Connect the repository
 
-   ```powershell
-   npm install --global @railway/cli
-   railway login
-   railway init
-   railway up
-   ```
-
-   The CLI uploads the local project folder and respects `.gitignore`. `.env` files and SQL/database dump files are excluded.
-3. In the Railway project canvas, add a **MySQL** service. Keep its database network private; only the Laravel service needs to connect to it.
-4. In the Laravel service, set the variables below. In Railway's variable editor, reference the MySQL service variables; if the service is named `MySQL`, the references look like `${{MySQL.MYSQLHOST}}`.
+1. Sign in to Vercel and import `abdikarim998/SchoolDesk` from GitHub. Grant the GitHub app access to this repository only.
+2. Leave the account on the free Hobby plan. Do not start a Pro trial or add billing details.
+3. Create a MySQL preview database with the provider. Use a unique, strong password and synthetic records only. The free Aiven MySQL tier, for example, is limited to 1 GB and may power off when unused; it is suitable only for a prototype.
+4. Add the following variables to Vercel Project Settings → Environment Variables for Production. Use the values supplied by the database provider and generate a new, stable `APP_KEY` for this hosted app. Download that provider's public CA certificate and base64-encode it as `MYSQL_CA_CERT_BASE64`; keep the same CA contents in the GitHub repository secret of the same name. In PowerShell, encode a downloaded `ca.pem` with `[Convert]::ToBase64String([IO.File]::ReadAllBytes('C:\path\to\ca.pem'))`.
 
    ```text
    APP_ENV=production
    APP_DEBUG=false
+   APP_KEY=<new hosted-app key; keep private>
+   APP_URL=https://<your-project>.vercel.app
    APP_TIMEZONE=Africa/Nairobi
-   APP_KEY=<generate a new key for this hosted app>
-   APP_URL=https://<the-generated-Railway-domain>
    LOG_CHANNEL=stderr
    DB_CONNECTION=mysql
-   DB_HOST=${{MySQL.MYSQLHOST}}
-   DB_PORT=${{MySQL.MYSQLPORT}}
-   DB_DATABASE=${{MySQL.MYSQLDATABASE}}
-   DB_USERNAME=${{MySQL.MYSQLUSER}}
-   DB_PASSWORD=${{MySQL.MYSQLPASSWORD}}
+   DB_HOST=<database host>
+   DB_PORT=<database port>
+   DB_DATABASE=<database name>
+   DB_USERNAME=<database user>
+   DB_PASSWORD=<database password>
+   MYSQL_CA_CERT_BASE64=<base64 encoded MySQL provider CA certificate>
    SESSION_DRIVER=database
    CACHE_STORE=database
-   QUEUE_CONNECTION=database
+   QUEUE_CONNECTION=sync
    ```
 
-   Generate a fresh key with `php artisan key:generate --show` in a trusted local terminal and paste it into Railway's private variable editor. Never reuse the local app key or publish it in chat or source control. Keep `APP_DEBUG=false` in production.
+   The container entrypoint decodes this public CA certificate into `/tmp` and configures PDO to verify the MySQL server certificate. Do not disable certificate verification to work around TLS setup.
 
-5. Set the Laravel service's **Pre-deploy Command** to:
+5. In GitHub repository Settings → Secrets and variables → Actions, add these repository secrets: `APP_KEY`, `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`, and `MYSQL_CA_CERT_BASE64`. These are used by the schema migration workflow; use the same CA certificate for Vercel and GitHub.
+6. In GitHub, open Actions → **Migrate Vercel database** → **Run workflow**. This runs the committed Laravel migrations against the hosted MySQL service. Do not run migrations automatically when a Vercel container starts: multiple instances can start concurrently.
+7. Deploy the app from Vercel and check the deployment logs and `/up`. Add a fresh administrator through the `school:create-admin` command from a trusted PHP environment; never enable the development seeder on a public deployment.
 
-   ```text
-   php artisan migrate --force
-   ```
+## Data and runtime limits
 
-   This creates the schema in the hosted MySQL database during deployment. Do not use `migrate --seed` for production: the development seeder creates public demo accounts with a shared, known password and a synthetic student roster.
-6. In the Laravel service settings, enable **Serverless** so the app sleeps when nobody is using it. MySQL must remain available for data access, so its usage can still consume the monthly credit. Leave the account on Free; a US$1 hard limit is not available. Let Railway deploy the app. Its Laravel builder detects the framework and runs it with PHP-FPM and Caddy. In Settings → Networking, generate a Railway domain. Set `APP_URL` to that exact HTTPS address and the health check path to `/up`, then redeploy.
-7. After the first successful migration, open the Laravel service shell and run:
-
-   ```text
-   php artisan school:create-admin
-   ```
-
-   The command asks for the administrator name and email, then prompts for a password without displaying it. Choose a unique password of at least 12 characters. Sign in at the generated domain and add real school accounts through the admin area.
-8. Keep the MySQL service's public/TCP access disabled. Before adding any real school records, make a separate database backup and confirm it can be restored; the Free plan's limited allowance and service interruptions make it unsuitable as the only copy of school data.
-
-## Data handling
-
-- This deployment starts with an empty database and the migrations only. It does not upload the local database or seeded demo data.
-- Do not put real student data in this Free-plan deployment. Use synthetic records until the school chooses reliable paid hosting and an approved storage arrangement.
-- Do not share Railway database credentials, `APP_KEY`, or administrator passwords. Store them only as Railway variables or in a trusted password manager.
-
-## Rollback and ongoing changes
-
-The Railway CLI can upload code changes with `railway up`. Database migrations should be backward-compatible with the running app, and MySQL backups should be checked regularly. The Railway MySQL service is private by default; Railway documents its variables and backup controls in the [MySQL guide](https://docs.railway.com/databases/mysql).
+- The deploy uses migrations only; it does not upload the local `.env`, database, or seeded student roster.
+- Container files and local uploads do not persist across Vercel instances. Configure external object storage before relying on uploaded files.
+- The free database and Vercel Hobby quotas can pause or power off services. This setup does not provide a school-grade availability or backup guarantee.
+- For real school operations, use a hosting plan and database arrangement approved for the school's use, with access controls, verified TLS, backups, and an agreed data-retention policy.

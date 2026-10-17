@@ -1,0 +1,54 @@
+name: Migrate Vercel database
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, pdo_mysql, xml, bcmath, ctype, fileinfo, tokenizer, intl, zip
+          coverage: none
+
+      - name: Install production dependencies
+        run: composer install --no-dev --no-interaction --no-progress --prefer-dist --optimize-autoloader
+
+      - name: Prepare MySQL TLS certificate
+        env:
+          MYSQL_CA_CERT_BASE64: ${{ secrets.MYSQL_CA_CERT_BASE64 }}
+        run: |
+          if [ -z "$MYSQL_CA_CERT_BASE64" ]; then
+            echo "Set MYSQL_CA_CERT_BASE64 in GitHub repository secrets before running this workflow."
+            exit 1
+          fi
+
+          printf '%s' "$MYSQL_CA_CERT_BASE64" | base64 --decode > "$RUNNER_TEMP/mysql-ca.pem"
+          echo "MYSQL_ATTR_SSL_CA=$RUNNER_TEMP/mysql-ca.pem" >> "$GITHUB_ENV"
+
+      - name: Run Laravel migrations
+        env:
+          APP_ENV: production
+          APP_DEBUG: 'false'
+          APP_KEY: ${{ secrets.APP_KEY }}
+          APP_URL: https://example.invalid
+          DB_CONNECTION: mysql
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_DATABASE: ${{ secrets.DB_DATABASE }}
+          DB_USERNAME: ${{ secrets.DB_USERNAME }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          SESSION_DRIVER: database
+          CACHE_STORE: database
+          QUEUE_CONNECTION: sync
+          LOG_CHANNEL: stderr
+        run: php artisan migrate --force
